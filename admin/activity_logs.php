@@ -1,86 +1,86 @@
 <?php
-require_once '../includes/config.php';
-require_once '../includes/db.php';
-require_once '../includes/auth.php';
-require_once '../includes/functions.php';
-
-requireAdmin();
-
-// Pagination variables
-$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$per_page = 20;
-$offset = ($page - 1) * $per_page;
-
-// Filter variables
-$user_id = isset($_GET['user_id']) ? (int)$_GET['user_id'] : null;
-$action = isset($_GET['action']) ? sanitizeInput($_GET['action']) : '';
-$date_from = isset($_GET['date_from']) ? sanitizeInput($_GET['date_from']) : '';
-$date_to = isset($_GET['date_to']) ? sanitizeInput($_GET['date_to']) : '';
-
-// Build base query
-$query = "
-    SELECT 
-        al.*, 
-        u.username,
-        u.full_name
-    FROM activity_logs al
-    LEFT JOIN users u ON al.user_id = u.id
-";
-
-// Build where conditions
-$conditions = [];
-$params = [];
-
-if ($user_id) {
-    $conditions[] = "al.user_id = ?";
-    $params[] = $user_id;
-}
-
-if (!empty($action)) {
-    $conditions[] = "al.action = ?";
-    $params[] = $action;
-}
-
-if (!empty($date_from) && validateDate($date_from)) {
-    $conditions[] = "DATE(al.action_time) >= ?";
-    $params[] = $date_from;
-}
-
-if (!empty($date_to) && validateDate($date_to)) {
-    $conditions[] = "DATE(al.action_time) <= ?";
-    $params[] = $date_to;
-}
-
-// Add conditions to query if any
-if (!empty($conditions)) {
-    $query .= " WHERE " . implode(" AND ", $conditions);
-}
-
-// Add sorting and pagination
-$query .= " ORDER BY al.action_time DESC LIMIT $offset, $per_page";
-
-// Prepare and execute the query
-$stmt = $pdo->prepare($query);
-$stmt->execute($params);
-$activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Get total count for pagination
-$count_query = "SELECT COUNT(*) as total FROM activity_logs al";
-if (!empty($conditions)) {
-    $count_query .= " WHERE " . implode(" AND ", $conditions);
-}
-$count_stmt = $pdo->prepare($count_query);
-$count_stmt->execute($params);
-$total_activities = $count_stmt->fetch()['total'];
-$total_pages = ceil($total_activities / $per_page);
-
-// Get all users for filter dropdown
-$stmt = $conn->prepare("SELECT id, username, full_name FROM users ORDER BY full_name");
-$stmt->execute();
-$users = $stmt->fetchAll();
-
-// Get all action types for filter dropdown
-$action_types = ['LOGIN', 'LOGOUT', 'CREATE', 'UPDATE', 'DELETE', 'PASSWORD_CHANGE'];
+    require_once '../includes/config.php';
+    require_once '../includes/db.php';
+    require_once '../includes/auth.php';
+    require_once '../includes/functions.php';
+    
+    requireAdmin();
+    
+    // Pagination variables
+    $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+    $per_page = 20;
+    $offset = ($page - 1) * $per_page;
+    
+    // Filter variables
+    $user_id = isset($_GET['user_id']) ? (int)$_GET['user_id'] : null;
+    $action = isset($_GET['action']) ? sanitizeInput($_GET['action']) : '';
+    $date_from = isset($_GET['date_from']) ? sanitizeInput($_GET['date_from']) : '';
+    $date_to = isset($_GET['date_to']) ? sanitizeInput($_GET['date_to']) : '';
+    
+    // Build base query
+    $query = "
+        SELECT 
+            al.*, 
+            u.username,
+            u.full_name
+        FROM activity_logs al
+        LEFT JOIN users u ON al.user_id = u.id
+    ";
+    
+    // Build where conditions
+    $conditions = [];
+    $params = [];
+    
+    if ($user_id) {
+        $conditions[] = "al.user_id = ?";
+        $params[] = $user_id;
+    }
+    
+    if (!empty($action)) {
+        $conditions[] = "al.action = ?";
+        $params[] = $action;
+    }
+    
+    if (!empty($date_from) && validateDate($date_from)) {
+        $conditions[] = "DATE(al.action_time) >= ?";
+        $params[] = $date_from;
+    }
+    
+    if (!empty($date_to) && validateDate($date_to)) {
+        $conditions[] = "DATE(al.action_time) <= ?";
+        $params[] = $date_to;
+    }
+    
+    // Add conditions to query if any
+    if (!empty($conditions)) {
+        $query .= " WHERE " . implode(" AND ", $conditions);
+    }
+    
+    // Add sorting and pagination
+    $query .= " ORDER BY al.action_time DESC LIMIT $offset, $per_page";
+    
+    // Prepare and execute the query
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get total count for pagination
+    $count_query = "SELECT COUNT(*) as total FROM activity_logs al";
+    if (!empty($conditions)) {
+        $count_query .= " WHERE " . implode(" AND ", $conditions);
+    }
+    $count_stmt = $pdo->prepare($count_query);
+    $count_stmt->execute($params);
+    $total_activities = $count_stmt->fetch()['total'];
+    $total_pages = ceil($total_activities / $per_page);
+    
+    // Get all users for filter dropdown
+    $stmt = $conn->prepare("SELECT id, username, full_name FROM users ORDER BY full_name");
+    $stmt->execute();
+    $users = $stmt->fetchAll();
+    
+    // Get all action types for filter dropdown
+    $action_types = ['LOGIN', 'LOGOUT', 'CREATE', 'UPDATE', 'DELETE', 'PASSWORD_CHANGE'];
 ?>
 
 <!DOCTYPE html>
