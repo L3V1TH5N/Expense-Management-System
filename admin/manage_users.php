@@ -1027,7 +1027,7 @@ $full_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'Admin';
                     <i class='bx bxs-report'></i>
                     <span class="text">Reports</span>
                 </a>
-            </li>
+            </li>          
             <li>
                 <a href="activity_logs.php">
                     <i class='bx bxs-time'></i>
