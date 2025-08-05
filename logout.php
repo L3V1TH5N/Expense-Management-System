@@ -4,7 +4,6 @@
 
     // Debug: Check if session is active and user is logged in
     if (!isLoggedIn()) {
-        // If not logged in, just redirect to login
         header('Location: login.php');
         exit();
     }
