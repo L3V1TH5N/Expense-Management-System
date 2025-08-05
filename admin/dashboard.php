@@ -10,41 +10,41 @@ requireAdmin();
 $user_id = $_SESSION['user_id'];
 $full_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'Admin';
 
-// Get current month and year for filtering
-$current_month = date('Y-m');
-$current_month_name = date('F Y');
+// Get current date for filtering
+$today = date('Y-m-d');
+$today_formatted = date('F j, Y');
 
 // ==============================================
-// SYSTEM-WIDE STATISTICS
+// SYSTEM-WIDE STATISTICS FOR TODAY
 // ==============================================
 
-// Total expenses in the system this month
+// Total expenses in the system today
 $stmt = $conn->prepare("
     SELECT COUNT(*) as total_expenses 
     FROM expenses 
-    WHERE DATE_FORMAT(date, '%Y-%m') = ?
+    WHERE DATE(date) = ?
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $total_expenses = $stmt->fetch()['total_expenses'];
 
-// Total amount by fund type this month
+// Total amount by fund type today
 $stmt = $conn->prepare("
     SELECT 
         fund_type,
         SUM(total) as fund_total,
         COUNT(*) as fund_count
     FROM expenses 
-    WHERE DATE_FORMAT(date, '%Y-%m') = ?
+    WHERE DATE(date) = ?
     GROUP BY fund_type
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $fund_totals = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Initialize fund amounts
 $general_fund = 0;
 $sef_fund = 0;
 $trust_fund = 0;
-$total_monthly_amount = 0;
+$total_daily_amount = 0;
 
 // Process fund totals
 foreach ($fund_totals as $fund) {
@@ -59,7 +59,7 @@ foreach ($fund_totals as $fund) {
             $trust_fund = $fund['fund_total'];
             break;
     }
-    $total_monthly_amount += $fund['fund_total'];
+    $total_daily_amount += $fund['fund_total'];
 }
 
 // Total users in the system
@@ -67,30 +67,30 @@ $stmt = $conn->prepare("SELECT COUNT(*) as total_users FROM users");
 $stmt->execute();
 $total_users = $stmt->fetch()['total_users'];
 
-// Active encoders (users who created expenses this month)
+// Active encoders today (users who created expenses today)
 $stmt = $conn->prepare("
     SELECT COUNT(DISTINCT created_by) as active_encoders 
     FROM expenses 
-    WHERE DATE_FORMAT(date, '%Y-%m') = ?
+    WHERE DATE(date) = ?
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $active_encoders = $stmt->fetch()['active_encoders'];
 
-// Cash advances this month
+// Cash advances today
 $stmt = $conn->prepare("
     SELECT COUNT(*) as cash_advances 
     FROM expenses 
     WHERE expense_type = 'Cash Advance' 
-    AND DATE_FORMAT(date, '%Y-%m') = ?
+    AND DATE(date) = ?
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $cash_advances = $stmt->fetch()['cash_advances'];
 
 // ==============================================
-// RECENT ACTIVITIES AND DATA
+// RECENT ACTIVITIES AND DATA FOR TODAY
 // ==============================================
 
-// Recent expenses (all users)
+// Recent expenses today (all users)
 $stmt = $conn->prepare("
     SELECT 
         e.*, 
@@ -101,24 +101,26 @@ $stmt = $conn->prepare("
     LEFT JOIN offices o ON e.office_id = o.id 
     LEFT JOIN offices so ON e.sub_office_id = so.id 
     LEFT JOIN users u ON e.created_by = u.id
+    WHERE DATE(e.date) = ?
     ORDER BY e.created_at DESC 
     LIMIT 10
 ");
-$stmt->execute();
+$stmt->execute([$today]);
 $recent_expenses = $stmt->fetchAll();
 
-// Recent activity logs (system-wide)
+// Recent activity logs today (system-wide)
 $stmt = $pdo->prepare("
     SELECT al.*, u.full_name, u.username
     FROM activity_logs al 
     JOIN users u ON al.user_id = u.id 
+    WHERE DATE(al.action_time) = ?
     ORDER BY al.action_time DESC 
     LIMIT 10
 ");
-$stmt->execute();
+$stmt->execute([$today]);
 $recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Top encoders this month
+// Top encoders today
 $stmt = $conn->prepare("
     SELECT 
         u.full_name,
@@ -127,27 +129,27 @@ $stmt = $conn->prepare("
         SUM(e.total) as total_amount
     FROM users u
     LEFT JOIN expenses e ON u.id = e.created_by 
-        AND DATE_FORMAT(e.date, '%Y-%m') = ?
+        AND DATE(e.date) = ?
     WHERE u.role = 'encoder'
     GROUP BY u.id, u.full_name, u.username
     ORDER BY expense_count DESC, total_amount DESC
     LIMIT 5
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $top_encoders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Expense type breakdown this month
+// Expense type breakdown today
 $stmt = $conn->prepare("
     SELECT 
         expense_type,
         COUNT(*) as count,
         SUM(total) as total_amount
     FROM expenses 
-    WHERE DATE_FORMAT(date, '%Y-%m') = ?
+    WHERE DATE(date) = ?
     GROUP BY expense_type
     ORDER BY total_amount DESC
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $expense_types = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // ==============================================
@@ -155,21 +157,21 @@ $expense_types = $stmt->fetchAll(PDO::FETCH_ASSOC);
 // ==============================================
 
 // Check for potential issues
-$pending_reviews = 0; // You can implement a review system later
+$pending_reviews = 0;
 $system_alerts = [];
 
-// Check for large amounts (potential flag for review)
+// Check for large amounts today (potential flag for review)
 $stmt = $conn->prepare("
     SELECT COUNT(*) as large_amounts 
     FROM expenses 
     WHERE total > 100000 
-    AND DATE_FORMAT(date, '%Y-%m') = ?
+    AND DATE(date) = ?
 ");
-$stmt->execute([$current_month]);
+$stmt->execute([$today]);
 $large_amounts = $stmt->fetch()['large_amounts'];
 
 if ($large_amounts > 0) {
-    $system_alerts[] = "There are {$large_amounts} expenses over ₱100,000 this month";
+    $system_alerts[] = "There are {$large_amounts} expenses over ₱100,000 today";
 }
 
 // Check for users without recent activity
@@ -327,7 +329,7 @@ if ($inactive_users > 0) {
             background: var(--gradient-warning);
         }
 
-        /* Fund totals styling (reuse from encoder dashboard) */
+        /* Fund totals styling */
         .fund-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -574,8 +576,8 @@ if ($inactive_users > 0) {
             }
         }
 
-        /* Monthly Stats Header */
-        .monthly-stats-header {
+        /* Daily Stats Header */
+        .daily-stats-header {
             text-align: center;
             margin: 2rem 0 1rem 0;
             padding: 1rem;
@@ -583,14 +585,14 @@ if ($inactive_users > 0) {
             border-radius: 12px;
         }
 
-        .monthly-stats-header h3 {
+        .daily-stats-header h3 {
             color: var(--dark);
             margin: 0;
             font-size: 1.2rem;
             font-weight: 600;
         }
 
-        .monthly-stats-header p {
+        .daily-stats-header p {
             color: var(--dark-grey);
             margin: 0.25rem 0 0 0;
             font-size: 0.9rem;
@@ -712,7 +714,7 @@ if ($inactive_users > 0) {
                 </div>
             </div>
 
-			<br>
+            <br>
 
             <!-- Welcome Banner -->
             <div class="admin-welcome-banner fade-in">
@@ -724,7 +726,7 @@ if ($inactive_users > 0) {
                             Administrator
                         </span>
                     </h2>
-                    <p>Monitor system performance and manage the expense management system</p>
+                    <p>Monitor today's system performance and manage the expense management system</p>
                 </div>
             </div>
 
@@ -740,7 +742,7 @@ if ($inactive_users > 0) {
             </div>
             <?php endif; ?>
 
-			<!-- Fund Distribution Stats -->
+            <!-- Fund Distribution Stats -->
             <ul class="box-info">
                 <!-- General Fund -->
                 <li class="general-fund">
@@ -769,12 +771,12 @@ if ($inactive_users > 0) {
                     </span>
                 </li>
 
-                <!-- Total Monthly Amount -->
+                <!-- Total Daily Amount -->
                 <li class="total-amount">
                     <i class='bx bxs-dollar-circle'></i>
                     <span class="text">
-                        <h3>₱<?php echo number_format($total_monthly_amount, 2); ?></h3>
-                        <p>Total Monthly</p>
+                        <h3>₱<?php echo number_format($total_daily_amount, 2); ?></h3>
+                        <p>Total Today</p>
                     </span>
                 </li>
             </ul>
@@ -785,7 +787,7 @@ if ($inactive_users > 0) {
                     <i class='bx bxs-receipt'></i>
                     <span class="text">
                         <h3><?php echo number_format($total_expenses); ?></h3>
-                        <p>Total Expenses This Month</p>
+                        <p>Total Expenses Today</p>
                     </span>
                 </div>
 
@@ -801,24 +803,24 @@ if ($inactive_users > 0) {
                     <i class='bx bxs-user-check'></i>
                     <span class="text">
                         <h3><?php echo number_format($active_encoders); ?></h3>
-                        <p>Active Encoders This Month</p>
+                        <p>Active Encoders Today</p>
                     </span>
                 </div>
             </div>
 
-            <!-- Monthly Stats Header -->
-            <div class="monthly-stats-header">
-                <h3>💰 Fund Allocation for <?php echo $current_month_name; ?></h3>
-                <p>System-wide fund distribution and totals</p>
+            <!-- Daily Stats Header -->
+            <div class="daily-stats-header">
+                <h3>💰 Daily Fund Allocation for <?php echo $today_formatted; ?></h3>
+                <p>System-wide fund distribution and totals for today</p>
             </div>
 
             <!-- Admin Actions & Data Tables -->
             <div class="table-data">
 
-                <!-- Top Encoders This Month -->
+                <!-- Top Encoders Today -->
                 <div class="order">
                     <div class="head">
-                        <h3>Top Encoders - <?php echo $current_month_name; ?></h3>
+                        <h3>Top Encoders - Today</h3>
                         <a href="manage_users.php" class="btn-link">View All Users</a>
                     </div>
                     <?php if (!empty($top_encoders)): ?>
@@ -851,15 +853,15 @@ if ($inactive_users > 0) {
                     </table>
                     <?php else: ?>
                     <p style="text-align: center; color: var(--dark-grey); padding: 20px;">
-                        No encoder activity found for this month.
+                        No encoder activity found today.
                     </p>
                     <?php endif; ?>
                 </div>
 
-                <!-- Recent System Activity -->
+                <!-- Recent System Activity Today -->
                 <div class="order">
                     <div class="head">
-                        <h3>Recent System Activity</h3>
+                        <h3>Recent System Activity - Today</h3>
                         <a href="activity_logs.php" class="btn-link">View All Activities</a>
                     </div>
                     <div style="max-height: 400px; overflow-y: auto;">
@@ -937,7 +939,7 @@ if ($inactive_users > 0) {
                             <?php endforeach; ?>
                         <?php else: ?>
                         <p style="text-align: center; color: var(--dark-grey); padding: 20px;">
-                            No recent system activity found.
+                            No recent system activity found today.
                         </p>
                         <?php endif; ?>
                     </div>
@@ -945,10 +947,10 @@ if ($inactive_users > 0) {
             </div>
 
             <div class="table-data">
-                <!-- Recent Expenses (All Users) -->
+                <!-- Recent Expenses Today (All Users) -->
                 <div class="order">
                     <div class="head">
-                        <h3>Recent Expenses (All Users)</h3>
+                        <h3>Recent Expenses (All Users) - Today</h3>
                         <a href="all_expenses.php" class="btn-link">View All Expenses</a>
                     </div>
                     <?php if (!empty($recent_expenses)): ?>
@@ -987,15 +989,15 @@ if ($inactive_users > 0) {
                     </table>
                     <?php else: ?>
                     <p style="text-align: center; color: var(--dark-grey); padding: 20px;">
-                        No recent expenses found.
+                        No recent expenses found today.
                     </p>
                     <?php endif; ?>
                 </div>
 
-                <!-- Expense Type Breakdown -->
+                <!-- Expense Type Breakdown Today -->
                 <div class="order">
                     <div class="head">
-                        <h3>Expense Type Breakdown - <?php echo $current_month_name; ?></h3>
+                        <h3>Expense Type Breakdown - Today</h3>
                         <a href="reports.php" class="btn-link">Detailed Reports</a>
                     </div>
                     <?php if (!empty($expense_types)): ?>
@@ -1011,7 +1013,7 @@ if ($inactive_users > 0) {
                         <tbody>
                             <?php foreach ($expense_types as $type): ?>
                             <?php 
-                            $percentage = $total_monthly_amount > 0 ? ($type['total_amount'] / $total_monthly_amount) * 100 : 0;
+                            $percentage = $total_daily_amount > 0 ? ($type['total_amount'] / $total_daily_amount) * 100 : 0;
                             ?>
                             <tr>
                                 <td>
@@ -1035,7 +1037,7 @@ if ($inactive_users > 0) {
                     </table>
                     <?php else: ?>
                     <p style="text-align: center; color: var(--dark-grey); padding: 20px;">
-                        No expense data found for this month.
+                        No expense data found today.
                     </p>
                     <?php endif; ?>
                 </div>
