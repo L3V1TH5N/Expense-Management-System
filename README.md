@@ -1,2 +1,4 @@
-# expense-management-system
-The Offline Expense Management System is a local database-powered application designed to manage and organize expense entries for the Municipal Treasurer’s Office. It categorizes expenses based on fund type, bank, office, and expense type. It allows data encoding and monthly exporting of expense reports.
+Expense Management System
+The Offline Expense Management System is a secure, local database-powered application tailored for the Municipal Treasurer’s Office. It streamlines expense tracking by categorizing records according to fund type, bank, office, and expense type. Users can efficiently encode data, generate summaries, and export monthly expense reports with ease.
+
+Paid Software – The full source code and complete features are available exclusively to licensed buyers.
