@@ -6,163 +6,147 @@ require_once '../includes/functions.php';
 
 requireLogin();
 
-$success = '';
-$error = '';
+// Only allow POST requests
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: my_expenses.php?error=Invalid request method');
+    exit;
+}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    try {
-        // Validate expense ID
-        if (!isset($_POST['expense_id']) || !is_numeric($_POST['expense_id'])) {
-            throw new Exception("Invalid expense ID");
-        }
-        
-        $expense_id = (int)$_POST['expense_id'];
-        $user_id = $_SESSION['user_id'];
-        
-        // Get original expense data for logging and validation
-        $stmt = $conn->prepare("SELECT * FROM expenses WHERE id = ? AND created_by = ?");
-        $stmt->execute([$expense_id, $user_id]);
-        $original_expense = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$original_expense) {
-            throw new Exception("Expense not found or access denied");
-        }
-        
-        // Clean and validate input data
-        $data = [];
-        $data['fund_type'] = sanitizeInput($_POST['fund_type'] ?? '');
-        $data['bank'] = sanitizeInput($_POST['bank'] ?? '');
-        $data['date'] = sanitizeInput($_POST['date'] ?? '');
-        $data['check_number'] = sanitizeInput($_POST['check_number'] ?? '');
-        $data['payee'] = sanitizeInput($_POST['payee'] ?? '');
-        $data['expense_type'] = sanitizeInput($_POST['expense_type'] ?? '');
-        $data['amount'] = cleanNumericInput($_POST['amount'] ?? '');
-        $data['tax'] = cleanNumericInput($_POST['tax'] ?? '0');
+$user_id = $_SESSION['user_id'];
 
-        // Validate the expense data
-        $validation_errors = validateExpenseData($data);
-        if (!empty($validation_errors)) {
-            throw new Exception(implode("<br>", $validation_errors));
-        }
-
-        // Handle office assignments based on expense type
-        $showOfficeTypes = ['Personal Services', 'Maintenance and Other Operating Expenses', 'Capital Outlay'];
-        
-        if (in_array($data['expense_type'], $showOfficeTypes)) {
-            if (empty($_POST['office_id'])) {
-                throw new Exception("Office selection is required for this expense type");
-            }
-            
-            $data['office_id'] = (int)$_POST['office_id'];
-            $data['sub_office_id'] = !empty($_POST['sub_office_id']) ? (int)$_POST['sub_office_id'] : null;
-            
-            // Validate office hierarchy if sub-office is selected
-            if ($data['sub_office_id'] && !validateOfficeHierarchy($conn, $data['office_id'], $data['sub_office_id'])) {
-                throw new Exception("Selected sub-office doesn't belong to the selected office");
-            }
-        } else {
-            $data['office_id'] = null;
-            $data['sub_office_id'] = null;
-        }
-
-        // Convert amounts to float
-        $amount = (float)$data['amount'];
-        $tax = (float)$data['tax'];
-
-        // Calculate total based on expense type
-        if ($data['expense_type'] === 'Cash Advance') {
-            $tax = 0; // Cash advance doesn't have tax
-        }
-        $total = $amount + $tax;
-
-        // Validate final amounts
-        if ($amount <= 0) {
-            throw new Exception("Amount must be greater than zero");
-        }
-
-        if ($tax < 0) {
-            throw new Exception("Tax cannot be negative");
-        }
-
-        // Begin database transaction
-        $conn->beginTransaction();
-
+try {
+    // Get and validate form data
+    $expense_id = (int)$_POST['expense_id'];
+    $fund_type = trim($_POST['fund_type']);
+    $bank = trim($_POST['bank']);
+    $date = $_POST['date'];
+    $check_number = trim($_POST['check_number']);
+    $payee = trim($_POST['payee']);
+    $expense_type = $_POST['expense_type'];
+    $office_id = !empty($_POST['office_id']) ? (int)$_POST['office_id'] : null;
+    $sub_office_id = !empty($_POST['sub_office_id']) ? (int)$_POST['sub_office_id'] : null;
+    $amount = (float)$_POST['amount'];
+    $tax = (float)$_POST['tax'];
+    $total = (float)$_POST['total'];
+    
+    // Validation - Allow 0 amounts
+    if (empty($fund_type) || empty($bank) || empty($date) || empty($check_number) || 
+        empty($payee) || empty($expense_type) || $amount < 0) {
+        throw new Exception('All required fields must be filled and amount cannot be negative');
+    }
+    
+    // CORRECTED: ALL expense types require office selection (same as encode.php)
+    $office_required_types = ['Personnel Services', 'Maintenance and Other Operating Expenses', 'Capital Outlay', 'Cash Advance', 'Others'];
+    if (in_array($expense_type, $office_required_types) && empty($office_id)) {
+        throw new Exception('Office selection is required for all expense types');
+    }
+    
+    // For Cash Advance, ensure tax is 0 (same as encode.php)
+    if ($expense_type === 'Cash Advance') {
+        $tax = 0;
+        $total = $amount; // Recalculate total without tax
+    }
+    
+    // Validate that the expense belongs to the current user
+    $check_stmt = $conn->prepare("SELECT created_by FROM expenses WHERE id = ?");
+    $check_stmt->execute([$expense_id]);
+    $expense_owner = $check_stmt->fetchColumn();
+    
+    if (!$expense_owner || $expense_owner != $user_id) {
+        throw new Exception('Expense not found or you do not have permission to edit it');
+    }
+    
+    $conn->beginTransaction();
+    
+    // Get original expense data for logging
+    $original_stmt = $conn->prepare("
+        SELECT e.*, o.name as office_name, so.name as sub_office_name 
+        FROM expenses e 
+        LEFT JOIN offices o ON e.office_id = o.id 
+        LEFT JOIN offices so ON e.sub_office_id = so.id 
+        WHERE e.id = ?
+    ");
+    $original_stmt->execute([$expense_id]);
+    $original_expense = $original_stmt->fetch(PDO::FETCH_ASSOC);
+    
+    // Update the expense
+    $update_stmt = $conn->prepare("
+        UPDATE expenses SET 
+            fund_type = ?, 
+            bank = ?, 
+            date = ?, 
+            check_number = ?, 
+            payee = ?, 
+            office_id = ?, 
+            sub_office_id = ?, 
+            expense_type = ?, 
+            amount = ?, 
+            tax = ?, 
+            total = ?, 
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND created_by = ?
+    ");
+    
+    $result = $update_stmt->execute([
+        $fund_type, 
+        $bank, 
+        $date, 
+        $check_number, 
+        $payee, 
+        $office_id, 
+        $sub_office_id, 
+        $expense_type, 
+        $amount, 
+        $tax, 
+        $total, 
+        $expense_id, 
+        $user_id
+    ]);
+    
+    if (!$result) {
+        throw new Exception('Failed to update expense');
+    }
+    
+    if ($update_stmt->rowCount() === 0) {
+        throw new Exception('No changes were made or expense not found');
+    }
+    
+    // Log the activity if function exists
+    if (function_exists('logExpenseActivity')) {
         try {
-            // Update the expense record
-            $stmt = $conn->prepare("
-                UPDATE expenses SET 
-                    fund_type = ?, bank = ?, date = ?, check_number = ?, payee = ?,
-                    office_id = ?, sub_office_id = ?, expense_type = ?,
-                    amount = ?, tax = ?, total = ?
-                WHERE id = ? AND created_by = ?
-            ");
-            
-            $result = $stmt->execute([
-                $data['fund_type'],
-                $data['bank'],
-                $data['date'],
-                $data['check_number'],
-                $data['payee'],
-                $data['office_id'],
-                $data['sub_office_id'],
-                $data['expense_type'],
-                $amount,
-                $tax,
-                $total,
-                $expense_id,
-                $user_id
-            ]);
-
-            if (!$result) {
-                throw new Exception("Failed to update expense record");
-            }
-
-            // Log the activity - FIXED: Using $pdo instead of $conn for activity logging
-            $updated_data = [
-                'fund_type' => $data['fund_type'],
-                'bank' => $data['bank'],
-                'date' => $data['date'],
-                'check_number' => $data['check_number'],
-                'payee' => $data['payee'],
-                'office_id' => $data['office_id'],
-                'sub_office_id' => $data['sub_office_id'],
-                'expense_type' => $data['expense_type'],
+            $new_data = [
+                'fund_type' => $fund_type,
+                'bank' => $bank,
+                'date' => $date,
+                'check_number' => $check_number,
+                'payee' => $payee,
+                'office_id' => $office_id,
+                'sub_office_id' => $sub_office_id,
+                'expense_type' => $expense_type,
                 'amount' => $amount,
                 'tax' => $tax,
                 'total' => $total
             ];
-
-            // FIXED: Use the correct PDO connection variable for logging
-            logExpenseActivity($pdo, 'UPDATE', $expense_id, $updated_data, $original_expense);
-
-            // Commit the transaction
-            $conn->commit();
             
-            $success = 'Expense updated successfully!';
-
-        } catch (PDOException $e) {
-            $conn->rollBack();
-            error_log("Database error in expense update: " . $e->getMessage());
-            throw new Exception("Database error occurred while updating the expense");
+            logExpenseActivity($conn, 'UPDATE', $expense_id, $original_expense, $new_data);
+        } catch (Exception $e) {
+            error_log("Failed to log expense update: " . $e->getMessage());
         }
-
-    } catch (Exception $e) {
-        if ($conn->inTransaction()) {
-            $conn->rollBack();
-        }
-        error_log("Error updating expense: " . $e->getMessage());
-        $error = $e->getMessage();
     }
+    
+    $conn->commit();
+    
+    // Redirect with success message
+    header('Location: my_expenses.php?success=' . urlencode('Expense updated successfully!'));
+    exit;
+    
+} catch (Exception $e) {
+    if ($conn->inTransaction()) {
+        $conn->rollBack();
+    }
+    
+    error_log("Error updating expense: " . $e->getMessage());
+    header('Location: my_expenses.php?error=' . urlencode($e->getMessage()));
+    exit;
 }
-
-// Redirect back to my_expenses.php with status
-$redirect_url = 'my_expenses.php';
-if ($success) {
-    $redirect_url .= '?success=' . urlencode($success);
-} elseif ($error) {
-    $redirect_url .= '?error=' . urlencode($error);
-}
-
-header('Location: ' . $redirect_url);
-exit;
 ?>
