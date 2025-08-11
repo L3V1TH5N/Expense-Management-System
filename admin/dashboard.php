@@ -1,197 +1,4 @@
-<?php
-require_once '../includes/config.php';
-require_once '../includes/db.php';
-require_once '../includes/auth.php';
-require_once '../includes/functions.php';
-
-requireAdmin();
-
-// Get admin user information
-$user_id = $_SESSION['user_id'];
-$full_name = isset($_SESSION['full_name']) ? $_SESSION['full_name'] : 'Admin';
-
-// Get current date for filtering
-$today = date('Y-m-d');
-$today_formatted = date('F j, Y');
-
-// ==============================================
-// SYSTEM-WIDE STATISTICS FOR TODAY
-// ==============================================
-
-// Total expenses in the system today
-$stmt = $conn->prepare("
-    SELECT COUNT(*) as total_expenses 
-    FROM expenses 
-    WHERE DATE(date) = ?
-");
-$stmt->execute([$today]);
-$total_expenses = $stmt->fetch()['total_expenses'];
-
-// Total amount by fund type today
-$stmt = $conn->prepare("
-    SELECT 
-        fund_type,
-        SUM(total) as fund_total,
-        COUNT(*) as fund_count
-    FROM expenses 
-    WHERE DATE(date) = ?
-    GROUP BY fund_type
-");
-$stmt->execute([$today]);
-$fund_totals = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Initialize fund amounts
-$general_fund = 0;
-$sef_fund = 0;
-$trust_fund = 0;
-$total_daily_amount = 0;
-
-// Process fund totals
-foreach ($fund_totals as $fund) {
-    switch ($fund['fund_type']) {
-        case 'General Fund':
-            $general_fund = $fund['fund_total'];
-            break;
-        case 'Special Education Fund':
-            $sef_fund = $fund['fund_total'];
-            break;
-        case 'Trust Fund':
-            $trust_fund = $fund['fund_total'];
-            break;
-    }
-    $total_daily_amount += $fund['fund_total'];
-}
-
-// Total users in the system
-$stmt = $conn->prepare("SELECT COUNT(*) as total_users FROM users");
-$stmt->execute();
-$total_users = $stmt->fetch()['total_users'];
-
-// Active encoders today (users who created expenses today)
-$stmt = $conn->prepare("
-    SELECT COUNT(DISTINCT created_by) as active_encoders 
-    FROM expenses 
-    WHERE DATE(date) = ?
-");
-$stmt->execute([$today]);
-$active_encoders = $stmt->fetch()['active_encoders'];
-
-// Cash advances today
-$stmt = $conn->prepare("
-    SELECT COUNT(*) as cash_advances 
-    FROM expenses 
-    WHERE expense_type = 'Cash Advance' 
-    AND DATE(date) = ?
-");
-$stmt->execute([$today]);
-$cash_advances = $stmt->fetch()['cash_advances'];
-
-// ==============================================
-// RECENT ACTIVITIES AND DATA FOR TODAY
-// ==============================================
-
-// Recent expenses today (all users)
-$stmt = $conn->prepare("
-    SELECT 
-        e.*, 
-        o.name as office_name, 
-        so.name as sub_office_name,
-        u.full_name as encoder_name
-    FROM expenses e 
-    LEFT JOIN offices o ON e.office_id = o.id 
-    LEFT JOIN offices so ON e.sub_office_id = so.id 
-    LEFT JOIN users u ON e.created_by = u.id
-    WHERE DATE(e.date) = ?
-    ORDER BY e.created_at DESC 
-    LIMIT 10
-");
-$stmt->execute([$today]);
-$recent_expenses = $stmt->fetchAll();
-
-// Recent activity logs today (system-wide)
-$stmt = $pdo->prepare("
-    SELECT al.*, u.full_name, u.username
-    FROM activity_logs al 
-    JOIN users u ON al.user_id = u.id 
-    WHERE DATE(al.action_time) = ?
-    ORDER BY al.action_time DESC 
-    LIMIT 10
-");
-$stmt->execute([$today]);
-$recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Top encoders today
-$stmt = $conn->prepare("
-    SELECT 
-        u.full_name,
-        u.username,
-        COUNT(e.id) as expense_count,
-        SUM(e.total) as total_amount
-    FROM users u
-    LEFT JOIN expenses e ON u.id = e.created_by 
-        AND DATE(e.date) = ?
-    WHERE u.role = 'encoder'
-    GROUP BY u.id, u.full_name, u.username
-    ORDER BY expense_count DESC, total_amount DESC
-    LIMIT 5
-");
-$stmt->execute([$today]);
-$top_encoders = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Expense type breakdown today
-$stmt = $conn->prepare("
-    SELECT 
-        expense_type,
-        COUNT(*) as count,
-        SUM(total) as total_amount
-    FROM expenses 
-    WHERE DATE(date) = ?
-    GROUP BY expense_type
-    ORDER BY total_amount DESC
-");
-$stmt->execute([$today]);
-$expense_types = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// ==============================================
-// SYSTEM HEALTH METRICS
-// ==============================================
-
-// Check for potential issues
-$pending_reviews = 0;
-$system_alerts = [];
-
-// Check for large amounts today (potential flag for review)
-$stmt = $conn->prepare("
-    SELECT COUNT(*) as large_amounts 
-    FROM expenses 
-    WHERE total > 100000 
-    AND DATE(date) = ?
-");
-$stmt->execute([$today]);
-$large_amounts = $stmt->fetch()['large_amounts'];
-
-if ($large_amounts > 0) {
-    $system_alerts[] = "There are {$large_amounts} expenses over ₱100,000 today";
-}
-
-// Check for users without recent activity
-$stmt = $conn->prepare("
-    SELECT COUNT(*) as inactive_users 
-    FROM users u 
-    WHERE u.role = 'encoder' 
-    AND u.id NOT IN (
-        SELECT DISTINCT created_by 
-        FROM expenses 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-    )
-");
-$stmt->execute();
-$inactive_users = $stmt->fetch()['inactive_users'];
-
-if ($inactive_users > 0) {
-    $system_alerts[] = "{$inactive_users} encoders haven't created any expenses in the last 30 days";
-}
-?>
+<?php include 'functions/dashboard.php'; ?>
 
 <!DOCTYPE html>
 <html lang="en">
@@ -201,431 +8,7 @@ if ($inactive_users > 0) {
     <link href='https://unpkg.com/boxicons@2.0.9/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="../assets/css/style.css">
     <title>Admin Dashboard - Expense Management System</title>
-    <style>
-        :root {
-            --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --gradient-success: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
-            --gradient-warning: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-            --gradient-info: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-            --gradient-danger: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-            --gradient-general: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
-            --gradient-sef: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-            --gradient-trust: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
-            --gradient-total: linear-gradient(135deg, #27ae60 0%, #229954 100%);
-            --gradient-users: linear-gradient(135deg, #9b59b6 0%, #8e44ad 100%);
-            --gradient-encoders: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
-            --shadow-light: 0 4px 20px rgba(0,0,0,0.1);
-            --shadow-hover: 0 8px 30px rgba(0,0,0,0.15);
-            --border-radius: 16px;
-            --animation-speed: 0.3s;
-            --admin-primary: #2c3e50;
-            --admin-secondary: #34495e;
-        }
-
-        /* Admin-specific styling */
-        .admin-welcome-banner {
-            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-            border-radius: var(--border-radius);
-            padding: 2rem;
-            margin-bottom: 2rem;
-            color: white;
-            position: relative;
-            overflow: hidden;
-            box-shadow: var(--shadow-light);
-        }
-
-        .admin-welcome-banner::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -50%;
-            width: 200%;
-            height: 200%;
-            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.08'%3E%3Ccircle cx='30' cy='30' r='3'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
-            animation: float 25s infinite linear;
-        }
-
-        @keyframes float {
-            0% { transform: translate(-50%, -50%) rotate(0deg); }
-            100% { transform: translate(-50%, -50%) rotate(360deg); }
-        }
-
-        .admin-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            background: rgba(255,255,255,0.2);
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            margin-left: 10px;
-        }
-
-        /* Enhanced Stats Cards for Admin */
-        .admin-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-top: 24px;
-        }
-
-        .admin-stats .stat-card {
-            background: var(--light);
-            padding: 20px;
-            border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            border: 1px solid var(--grey);
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.3s ease;
-        }
-
-        .admin-stats .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 25px rgba(0,0,0,0.12);
-        }
-
-        .admin-stats .stat-card.total-expenses::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: var(--gradient-primary);
-        }
-
-        .admin-stats .stat-card.total-users::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: var(--gradient-users);
-        }
-
-        .admin-stats .stat-card.active-encoders::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: var(--gradient-encoders);
-        }
-
-        .admin-stats .stat-card.cash-advances::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: var(--gradient-warning);
-        }
-
-        /* Fund totals styling */
-        .fund-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-top: 16px;
-        }
-
-        .fund-stats .stat-card.general-fund::before {
-            background: var(--gradient-general);
-        }
-
-        .fund-stats .stat-card.sef-fund::before {
-            background: var(--gradient-sef);
-        }
-
-        .fund-stats .stat-card.trust-fund::before {
-            background: var(--gradient-trust);
-        }
-
-        .fund-stats .stat-card.total-amount::before {
-            background: var(--gradient-total);
-        }
-
-        .stat-card i {
-            font-size: 32px;
-            flex-shrink: 0;
-        }
-
-        .stat-card.total-expenses i { color: #667eea; }
-        .stat-card.total-users i { color: #9b59b6; }
-        .stat-card.active-encoders i { color: #e67e22; }
-        .stat-card.cash-advances i { color: #f093fb; }
-        .stat-card.general-fund i { color: #3498db; }
-        .stat-card.sef-fund i { color: #e74c3c; }
-        .stat-card.trust-fund i { color: #f39c12; }
-        .stat-card.total-amount i { color: #27ae60; }
-
-        .stat-card .text h3 {
-            font-size: 20px;
-            font-weight: 700;
-            color: var(--dark);
-            margin-bottom: 4px;
-            line-height: 1.2;
-        }
-
-        .stat-card .text p {
-            color: var(--dark-grey);
-            font-size: 13px;
-            margin: 0;
-            line-height: 1.3;
-        }
-
-        /* Admin Action Cards */
-        .admin-actions {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin-top: 24px;
-        }
-
-        .admin-action-card {
-            background: var(--light);
-            border-radius: 20px;
-            padding: 24px;
-            transition: all 0.3s ease;
-            border: 1px solid var(--grey);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .admin-action-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-            border-color: var(--admin-primary);
-        }
-
-        .admin-action-card a {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            text-decoration: none;
-            color: var(--dark);
-            height: 100%;
-        }
-
-        .admin-action-card i {
-            font-size: 48px;
-            margin-bottom: 16px;
-            color: var(--admin-primary);
-            transition: all 0.3s ease;
-        }
-
-        .admin-action-card:hover i {
-            transform: scale(1.1);
-        }
-
-        .admin-action-card h4 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--dark);
-        }
-
-        .admin-action-card p {
-            color: var(--dark-grey);
-            font-size: 14px;
-            margin: 0;
-        }
-
-        /* System Alerts */
-        .system-alerts {
-            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
-            border-left: 4px solid #ffc107;
-            padding: 16px 20px;
-            border-radius: 8px;
-            margin-bottom: 24px;
-        }
-
-        .system-alerts h4 {
-            color: #856404;
-            margin-bottom: 8px;
-            font-size: 16px;
-        }
-
-        .system-alerts ul {
-            margin: 0;
-            padding-left: 20px;
-            color: #856404;
-        }
-
-        /* Top Encoders Table */
-        .top-encoders-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 16px;
-        }
-
-        .top-encoders-table th,
-        .top-encoders-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--grey);
-        }
-
-        .top-encoders-table th {
-            background: var(--grey);
-            font-weight: 600;
-            color: var(--dark);
-        }
-
-        .encoder-rank {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            font-size: 12px;
-            font-weight: 700;
-            color: white;
-            margin-right: 8px;
-        }
-
-        .encoder-rank.rank-1 { background: #f39c12; }
-        .encoder-rank.rank-2 { background: #95a5a6; }
-        .encoder-rank.rank-3 { background: #e67e22; }
-        .encoder-rank.rank-other { background: var(--dark-grey); }
-
-        /* Activity Log Styling */
-        .activity-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--grey);
-        }
-
-        .activity-item:last-child {
-            border-bottom: none;
-        }
-
-        .activity-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            color: white;
-            flex-shrink: 0;
-        }
-
-        .activity-icon.login { background: var(--blue); }
-        .activity-icon.logout { background: var(--dark-grey); }
-        .activity-icon.create { background: var(--blue); }
-        .activity-icon.update { background: var(--yellow); }
-        .activity-icon.delete { background: var(--red); }
-        .activity-icon.password { background: var(--orange); }
-
-        .activity-content {
-            flex-grow: 1;
-        }
-
-        .activity-content .activity-title {
-            font-weight: 500;
-            color: var(--dark);
-            margin-bottom: 2px;
-        }
-
-        .activity-content .activity-time {
-            font-size: 12px;
-            color: var(--dark-grey);
-        }
-
-        /* Responsive Design */
-        @media screen and (max-width: 768px) {
-            .admin-actions {
-                grid-template-columns: 1fr;
-            }
-            
-            .admin-action-card {
-                padding: 20px;
-            }
-
-            .admin-stats, .fund-stats {
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 12px;
-            }
-
-            .stat-card {
-                padding: 16px;
-                gap: 12px;
-            }
-
-            .stat-card i {
-                font-size: 28px;
-            }
-
-            .stat-card .text h3 {
-                font-size: 18px;
-            }
-        }
-
-        /* Daily Stats Header */
-        .daily-stats-header {
-            text-align: center;
-            margin: 2rem 0 1rem 0;
-            padding: 1rem;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 12px;
-        }
-
-        .daily-stats-header h3 {
-            color: var(--dark);
-            margin: 0;
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-
-        .daily-stats-header p {
-            color: var(--dark-grey);
-            margin: 0.25rem 0 0 0;
-            font-size: 0.9rem;
-        }
-
-        /* Brand styling for admin */
-        .nav-text {
-            font-size: 25px;
-            font-weight: 600;
-            color: var(--dark);
-            margin-left: 10px;
-        }
-
-        .brand {
-            display: flex;
-            align-items: center;
-            font-size: 30px; 
-            width: 100%; 
-            margin-bottom: 20px; 
-            color: #fff;
-            text-decoration: none;
-        }
-
-        /* Animation */
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .admin-stats .stat-card, .fund-stats .stat-card, .table-data > div {
-            animation: fadeIn 0.5s ease-out forwards;
-        }
-    </style>
+    <link rel="stylesheet" href="functions/css/dashboard.css">
 </head>
 <body>
     <!-- SIDEBAR -->
@@ -806,6 +189,14 @@ if ($inactive_users > 0) {
                         <p>Active Encoders Today</p>
                     </span>
                 </div>
+
+                <div class="stat-card cash-advances">
+                    <i class='bx bxs-credit-card'></i>
+                    <span class="text">
+                        <h3><?php echo number_format($cash_advances); ?></h3>
+                        <p>Cash Advances Today</p>
+                    </span>
+                </div>
             </div>
 
             <!-- Daily Stats Header -->
@@ -834,11 +225,14 @@ if ($inactive_users > 0) {
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($top_encoders as $index => $encoder): ?>
+                            <?php 
+                            $rank = 1;
+                            foreach ($top_encoders as $encoder): 
+                            ?>
                             <tr>
                                 <td>
-                                    <span class="encoder-rank rank-<?php echo $index < 3 ? ($index + 1) : 'other'; ?>">
-                                        <?php echo $index + 1; ?>
+                                    <span class="encoder-rank rank-<?php echo $rank <= 3 ? $rank : 'other'; ?>">
+                                        <?php echo $rank; ?>
                                     </span>
                                 </td>
                                 <td>
@@ -848,7 +242,9 @@ if ($inactive_users > 0) {
                                 <td><?php echo number_format($encoder['expense_count']); ?></td>
                                 <td>₱<?php echo number_format($encoder['total_amount'], 2); ?></td>
                             </tr>
-                            <?php endforeach; ?>
+                            <?php 
+                            $rank++;
+                            endforeach; ?>
                         </tbody>
                     </table>
                     <?php else: ?>
@@ -961,6 +357,7 @@ if ($inactive_users > 0) {
                                 <th>Payee</th>
                                 <th>Amount</th>
                                 <th>Fund Type</th>
+                                <th>Office</th>
                                 <th>Encoder</th>
                             </tr>
                         </thead>
@@ -970,9 +367,9 @@ if ($inactive_users > 0) {
                                 <td><?php echo date('M j, Y', strtotime($expense['date'])); ?></td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($expense['payee']); ?></strong><br>
-                                    <small><?php echo htmlspecialchars($expense['office_name']); ?></small>
+                                    <small><?php echo htmlspecialchars($expense['expense_type']); ?></small>
                                 </td>
-                                <td>₱<?php echo number_format($expense['total'], 2); ?></td>
+                                <td>₱<?php echo number_format($expense['calculated_total'], 2); ?></td>
                                 <td>
                                     <span class="status 
                                         <?php 
@@ -981,6 +378,15 @@ if ($inactive_users > 0) {
                                         ?>">
                                         <?php echo htmlspecialchars($expense['fund_type']); ?>
                                     </span>
+                                </td>
+                                <td>
+                                    <?php 
+                                    if ($expense['full_office_path']) {
+                                        echo htmlspecialchars($expense['full_office_path']);
+                                    } else {
+                                        echo htmlspecialchars($expense['office_name']);
+                                    }
+                                    ?>
                                 </td>
                                 <td><?php echo htmlspecialchars($expense['encoder_name']); ?></td>
                             </tr>
@@ -1042,61 +448,103 @@ if ($inactive_users > 0) {
                     <?php endif; ?>
                 </div>
             </div>
+
+            <!-- Quick Actions Section -->
+            <div class="daily-stats-header" style="margin-top: 2rem;">
+                <h3>🚀 Quick Actions</h3>
+                <p>Common administrative tasks and system management</p>
+            </div>
+
+            <div class="table-data">
+                <!-- System Summary -->
+                <div class="order">
+                    <div class="head">
+                        <h3>System Summary</h3>
+                        <a href="reports.php" class="btn-link">Full Reports</a>
+                    </div>
+                    <div style="padding: 20px;">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                            <div style="text-align: center; padding: 16px; background: var(--grey); border-radius: 8px;">
+                                <h4 style="margin: 0; color: var(--blue);">Today's Total</h4>
+                                <p style="font-size: 24px; font-weight: bold; margin: 8px 0; color: var(--dark);">
+                                    ₱<?php echo number_format($total_daily_amount, 2); ?>
+                                </p>
+                                <small style="color: var(--dark-grey);"><?php echo $total_expenses; ?> transactions</small>
+                            </div>
+                            
+                            <div style="text-align: center; padding: 16px; background: var(--grey); border-radius: 8px;">
+                                <h4 style="margin: 0; color: var(--green);">Active Encoders</h4>
+                                <p style="font-size: 24px; font-weight: bold; margin: 8px 0; color: var(--dark);">
+                                    <?php echo $active_encoders; ?>
+                                </p>
+                                <small style="color: var(--dark-grey);">out of <?php echo $total_encoders; ?> encoders</small>
+                            </div>
+
+                            <?php if ($cash_advances > 0): ?>
+                            <div style="text-align: center; padding: 16px; background: var(--grey); border-radius: 8px;">
+                                <h4 style="margin: 0; color: var(--orange);">Cash Advances</h4>
+                                <p style="font-size: 24px; font-weight: bold; margin: 8px 0; color: var(--dark);">
+                                    <?php echo $cash_advances; ?>
+                                </p>
+                                <small style="color: var(--dark-grey);">requires attention</small>
+                            </div>
+                            <?php endif; ?>
+
+                            <div style="text-align: center; padding: 16px; background: var(--grey); border-radius: 8px;">
+                                <h4 style="margin: 0; color: var(--purple);">System Health</h4>
+                                <p style="font-size: 24px; font-weight: bold; margin: 8px 0; color: var(--dark);">
+                                    <?php echo empty($system_alerts) ? '✓' : '⚠'; ?>
+                                </p>
+                                <small style="color: var(--dark-grey);">
+                                    <?php echo empty($system_alerts) ? 'All Good' : count($system_alerts) . ' alerts'; ?>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Links -->
+                <div class="order">
+                    <div class="head">
+                        <h3>Quick Navigation</h3>
+                        <small style="color: var(--dark-grey);">Frequently used admin functions</small>
+                    </div>
+                    <div style="padding: 20px;">
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+                            <a href="manage_users.php" style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--light); border-radius: 8px; text-decoration: none; color: var(--dark); border: 1px solid var(--grey); transition: all 0.2s;">
+                                <i class='bx bxs-user-account' style="color: var(--blue);"></i>
+                                <span>Manage Users</span>
+                            </a>
+                            
+                            <a href="all_expenses.php" style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--light); border-radius: 8px; text-decoration: none; color: var(--dark); border: 1px solid var(--grey); transition: all 0.2s;">
+                                <i class='bx bxs-receipt' style="color: var(--green);"></i>
+                                <span>All Expenses</span>
+                            </a>
+                            
+                            <a href="reports.php" style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--light); border-radius: 8px; text-decoration: none; color: var(--dark); border: 1px solid var(--grey); transition: all 0.2s;">
+                                <i class='bx bxs-report' style="color: var(--orange);"></i>
+                                <span>Reports</span>
+                            </a>
+                            
+                            <a href="activity_logs.php" style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--light); border-radius: 8px; text-decoration: none; color: var(--dark); border: 1px solid var(--grey); transition: all 0.2s;">
+                                <i class='bx bxs-time' style="color: var(--purple);"></i>
+                                <span>Activity Logs</span>
+                            </a>
+                            
+                            <a href="system_settings.php" style="display: flex; align-items: center; gap: 8px; padding: 12px; background: var(--light); border-radius: 8px; text-decoration: none; color: var(--dark); border: 1px solid var(--grey); transition: all 0.2s;">
+                                <i class='bx bxs-cog' style="color: var(--dark-grey);"></i>
+                                <span>Settings</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
         <!-- MAIN -->
     </section>
     <!-- CONTENT -->
     
     <script src="../assets/js/script.js"></script>
-    <script>
-        // Add some interactive features for the admin dashboard
-        document.addEventListener('DOMContentLoaded', function() {
-            // Animate stats on load
-            const statCards = document.querySelectorAll('.stat-card');
-            statCards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
-            });
-
-            // Add click tracking for admin actions
-            const actionCards = document.querySelectorAll('.admin-action-card');
-            actionCards.forEach(card => {
-                card.addEventListener('click', function() {
-                    const actionName = this.querySelector('h4').textContent;
-                    console.log(`Admin action clicked: ${actionName}`);
-                    // You can add analytics tracking here
-                });
-            });
-
-            // Auto-refresh activity feed every 5 minutes
-            setInterval(function() {
-                // You can implement AJAX refresh here
-                console.log('Activity feed refresh would happen here');
-            }, 5 * 60 * 1000);
-
-            // Add hover effects to activity items
-            const activityItems = document.querySelectorAll('.activity-item');
-            activityItems.forEach(item => {
-                item.addEventListener('mouseenter', function() {
-                    this.style.background = 'var(--grey)';
-                    this.style.borderRadius = '8px';
-                    this.style.transition = 'all 0.2s ease';
-                });
-                
-                item.addEventListener('mouseleave', function() {
-                    this.style.background = 'transparent';
-                });
-            });
-
-            // Add system health check (you can expand this)
-            function checkSystemHealth() {
-                // This could make AJAX calls to check various system metrics
-                console.log('System health check performed');
-            }
-
-            // Run system health check every 10 minutes
-            setInterval(checkSystemHealth, 10 * 60 * 1000);
-            checkSystemHealth(); // Run immediately on load
-        });
-    </script>
+    <script src="functions/js/dashboard.js"></script>
 </body>
 </html>
