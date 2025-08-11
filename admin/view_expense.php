@@ -593,7 +593,7 @@ $activities = $activity_stmt->fetchAll();
                         <i class='bx bx-arrow-back'></i>
                         Back to All Expenses
                     </a>
-                    <a href="delete_expense.php?id=<?php echo $expense['id']; ?>" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this expense? This action cannot be undone.');">
+                    <a href="functions/delete.php?id=<?php echo $expense['id']; ?>" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete this expense? This action cannot be undone.');">
                         <i class='bx bx-trash'></i>
                         Delete Expense
                     </a>
@@ -645,6 +645,37 @@ $activities = $activity_stmt->fetchAll();
 
             console.log('Expense detail page loaded successfully!');
         });
+
+        function deleteExpense(expenseId) {
+    const reason = prompt("Enter deletion reason (optional):");
+    if (reason === null) return; // User cancelled
+    
+    if (confirm('Are you sure you want to delete this expense? This action cannot be undone.')) {
+        fetch('functions/delete.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                expense_id: expenseId,
+                deletion_reason: reason || 'Admin deletion'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Expense deleted successfully!');
+                window.location.href = 'all_expenses.php';
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('An error occurred while deleting the expense.');
+        });
+    }
+}
     </script>
 </body>
 </html>
