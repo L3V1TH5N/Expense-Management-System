@@ -136,7 +136,7 @@ try {
     }
     
     if ($report_type === 'issued_checks') {
-        $where_conditions[] = "e.expense_type IN ('Personal Services', 'Maintenance and Other Operating Expenses', 'Capital Outlay')";
+        $where_conditions[] = "e.expense_type IN ('Personnel Services', 'Maintenance and Other Operating Expenses', 'Capital Outlay')";
         
         if ($expense_type_filter) {
             $where_conditions[] = "e.expense_type = ?";
